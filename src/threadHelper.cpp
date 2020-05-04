@@ -22,6 +22,15 @@ void threadHelper::ThreadsContainer::threadCollecting() {
     {
         workIsDoneCollector.wait(locker);
 
+        if (endTime)
+        {
+            for (size_t i = 0; i < MAX_WORKERS; i++)
+            {
+                threads[i].detach();
+            }
+            return;
+        }
+
         while (freeNumbers.size() > 0)
         {
             auto current = freeNumbers.pop();
@@ -45,4 +54,11 @@ void threadHelper::__guts::threadCollector(threadHelper::ThreadsContainer &cont)
 void threadHelper::ThreadsContainer::operationEnded(size_t number)
 {
     freeNumbers.push(number);
+}
+
+void threadHelper::ThreadsContainer::shutdown()
+{
+    endTime = true;
+    workIsDoneCollector.notify_one();
+    collectorThread.join();
 }

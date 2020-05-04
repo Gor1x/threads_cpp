@@ -17,8 +17,18 @@ size_t mainHelper::MyTimer::getTime() {
     return elapsed_seconds;
 }
 
+void mainHelper::MyTimer::print()
+{
+    std::cout << "Done in " << getTime() << " ms" << std::endl;
+}
+
 void mainHelper::Result::print() {
-    std::cout << "Task " << task.id << " done in " << task.timer.getTime() << " ms, found " << counter << " primes" << std::endl;
+    std::cout << "Task " << task.id << " done in " << timeRes << " ms, found " << counter << " primes" << std::endl;
+}
+
+mainHelper::Result::Result(Task task, size_t counter) : task(task)
+        , counter(counter) {
+    timeRes = task.timer.getTime();
 }
 
 namespace mainHelper {

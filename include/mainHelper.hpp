@@ -14,6 +14,8 @@ namespace mainHelper
     public:
         MyTimer();
         size_t getTime();
+        void print();
+
     };
 
     struct Task
@@ -27,10 +29,14 @@ namespace mainHelper
 
     struct Result
     {
-        Task task;
-        size_t counter = 0;
+    public:
+        Result(Task task, size_t counter);
 
         void print();
+    private:
+        Task task;
+        size_t counter = 0;
+        size_t timeRes;
     };
 }
 
@@ -53,12 +59,19 @@ namespace threadHelper
 
         void operationEnded(size_t number);
 
+        void shutdown();
+
         template<typename F>
         void giveTask(mainHelper::Task task, lab_17::sync_queue<mainHelper::Result> &results, F function) {
             auto number = *freeThreads.begin();
             busyWorkers++;
             freeThreads.erase(number);
-            threads[number] = std::thread(function, std::ref(workIsDoneCollector), std::ref(results), task, number);
+            threads[number] = std::thread(function
+                    , std::ref(workIsDoneCollector)
+                    , std::ref(results)
+                    , task
+                    , std::ref(*this)
+                    , number);
         }
 
     private:
