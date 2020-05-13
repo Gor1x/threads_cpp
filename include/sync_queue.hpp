@@ -56,19 +56,17 @@ namespace lab_17 {
          * Copy assignment is forbidden.
          */
         sync_queue &operator =(sync_queue const &) = delete;
-        /**
-         * Push value into the queue, wait if needed.
-         * If queue was already shutdown or is shutdown during waiting, exception is thrown.
-         * @param value value to be pushed (todo: references?)
-         */
-        void push(const T &value);
+
+        void push(T &&value);
+
         /**
          * Push value into the queue only if there is space for it.
          * If queue was shutdown, operation is not performed.
          * @param x value to be pushed (todo: references?)
          * @return was operation successful or not.
          */
-        bool try_push(const T &x);
+        bool try_push(T &&x);
+
         /**
          * Pop value from the queue, wait if needed.
          * If queue was already shutdown or is shutdown during waiting, exception is thrown.
@@ -99,7 +97,7 @@ namespace lab_17 {
         bool is_shutdown() const noexcept;
 
     private:
-        bool do_try_push(const T &value);
+        bool do_try_push(T &&value);
 
         optional<T> do_try_pop();
 
@@ -169,40 +167,25 @@ namespace lab_17 {
     }
 
     template<typename T>
-    bool sync_queue<T>::try_push(const T &x)
+    bool sync_queue<T>::try_push(T &&x)
     {
         std::lock_guard<std::mutex> guard(queueMutex);
 
         if (is_shutdown())
             return false;
 
-        return do_try_push(x);
+        return do_try_push(std::forward<T>(x));
     }
 
     template<typename T>
-    void sync_queue<T>::push(const T& value)
-    {
-        std::unique_lock<std::mutex> queueLock(queueMutex);
-
-        mNotFull.wait(queueLock, [this]() {
-            return is_shutdown() || mQueue.size() < maxSize;
-        });
-
-        if (is_shutdown())
-            throw queue_is_shutdown();
-
-        do_try_push(value);
-    }
-
-    template<typename T>
-    bool sync_queue<T>::do_try_push(const T &value)
+    bool sync_queue<T>::do_try_push(T &&value)
     {
         if (mQueue.size() == maxSize)
         {
             return false;
         }
 
-        mQueue.push(value);
+        mQueue.push(std::move(value));
         mNotEmpty.notify_one();
         return true;
     }
@@ -219,6 +202,23 @@ namespace lab_17 {
         mQueue.pop();
         mNotFull.notify_one();
         return element;
+    }
+
+    template<typename T>
+    void sync_queue<T>::push(T &&value)
+    {
+        std::unique_lock<std::mutex> queueLock(queueMutex);
+
+        mNotFull.wait(queueLock, [this]() {
+            return is_shutdown() || mQueue.size() < maxSize;
+        });
+
+        if (is_shutdown())
+        {
+            throw queue_is_shutdown();
+        }
+
+        do_try_push(std::forward<T>(value));
     }
 
 }

@@ -76,8 +76,20 @@ static void joinThreads(ThreadContainer &threads)
 
 int main(int, char** argv)
 {
-    size_t maxQueueSize = std::stoull(argv[2]);
-    size_t workers = std::stoull(argv[1]);
+    size_t maxQueueSize;
+    size_t workers;
+
+    try
+    {
+        maxQueueSize = std::stoull(argv[2]);
+        workers = std::stoull(argv[1]);
+    }
+    catch (std::exception &e)
+    {
+        std::cout << "Invalid command line arguments";
+        exit(0);
+    }
+
 
     sync_queue<Task> tasks(maxQueueSize);
     sync_queue<Result> results;
@@ -105,7 +117,7 @@ int main(int, char** argv)
                 continue;
             }
 
-            tasks.push(task);
+            tasks.push(std::forward<Task>(task));
 
             timer.print();
         }
