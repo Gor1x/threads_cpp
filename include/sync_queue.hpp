@@ -20,8 +20,8 @@ namespace lab_17 {
      * Exception thrown when queue is shut down.
      * Any operation that was waiting inside the queue or would modify it after shutdown is aborted with this exception.
      */
-    class queue_is_shutdown {
-
+    class queue_is_shutdown : std::exception
+    {
     };
 
     /**
@@ -39,17 +39,15 @@ namespace lab_17 {
         /**
          * Move construction.
          */
-        sync_queue(sync_queue &&) noexcept;
+        sync_queue(sync_queue &&) noexcept = delete;
         /**
          * Move assignment.
          */
-        sync_queue &operator =(sync_queue &&) noexcept = default;
-
+        sync_queue &operator=(sync_queue &&) noexcept = delete;
         /**
          * Destruction.
          */
         ~sync_queue() noexcept = default;
-
         /**
          * Copy construction is forbidden.
          */
@@ -59,19 +57,15 @@ namespace lab_17 {
          */
         sync_queue &operator =(sync_queue const &) = delete;
 
-        /**
-         * Push value into the queue, wait if needed.
-         * If queue was already shutdown or is shutdown during waiting, exception is thrown.
-         * @param value value to be pushed (todo: references?)
-         */
-        void push(const T &value);
+        void push(T &&value);
+
         /**
          * Push value into the queue only if there is space for it.
          * If queue was shutdown, operation is not performed.
          * @param x value to be pushed (todo: references?)
          * @return was operation successful or not.
          */
-        bool try_push(const T &x);
+        bool try_push(T &&x);
 
         /**
          * Pop value from the queue, wait if needed.
@@ -85,20 +79,17 @@ namespace lab_17 {
          * @return optional popped value.
          */
         optional<T> try_pop();
-
         /**
          * Current size of queue.
          * @return size.
          */
         std::size_t size() const noexcept;
-
         /**
          * Shutdown queue.
          * After queue is shutdown, nothing can be pushed or popped,
          * and all waiting operations are aborted.
          */
         void shutdown();
-
         /**
          * Check if queue is shutdown.
          * @return is queue shutdown.
@@ -106,11 +97,15 @@ namespace lab_17 {
         bool is_shutdown() const noexcept;
 
     private:
+        bool do_try_push(T &&value);
+
+        optional<T> do_try_pop();
+
 
         std::condition_variable mNotFull;
         std::condition_variable mNotEmpty;
 
-        std::mutex queueMutex;
+        mutable std::mutex queueMutex;
         std::queue<T> mQueue;
         size_t maxSize;
         bool mShutdowned = false;
@@ -132,16 +127,16 @@ namespace lab_17 {
 
         if (is_shutdown())
             throw queue_is_shutdown();
-        mShutdowned = true;
-    }
 
-    template<typename T>
-    sync_queue<T>::sync_queue(sync_queue &&other) noexcept : mQueue(std::move(other.mQueue))
-                , maxSize(other.maxSize), mShutdowned(other.mShutdowned) {}
+        mShutdowned = true;
+        mNotEmpty.notify_all();
+        mNotFull.notify_all();
+    }
 
     template<typename T>
     std::size_t sync_queue<T>::size() const noexcept
     {
+        std::lock_guard<std::mutex> guard(queueMutex);
         return mQueue.size();
     }
 
@@ -150,15 +145,10 @@ namespace lab_17 {
     {
         std::lock_guard<std::mutex> guard(queueMutex);
 
-        if (is_shutdown() || mQueue.empty())
+        if (is_shutdown())
             return nullopt;
 
-        auto element = std::move(mQueue.front());
-        mQueue.pop();
-
-        mNotFull.notify_one();
-
-        return element;
+        return do_try_pop();
     }
 
     template<typename T>
@@ -167,46 +157,68 @@ namespace lab_17 {
         std::unique_lock<std::mutex> queueLock(queueMutex);
 
         mNotEmpty.wait(queueLock, [this]() {
-            return mQueue.size() > 0;
+            return is_shutdown() || mQueue.size() > 0;
         });
 
         if (is_shutdown())
             throw queue_is_shutdown();
 
-        T element = std::move(mQueue.front());
-        mQueue.pop();
-        mNotFull.notify_one();
-
-        return element;
+        return do_try_pop().value();
     }
 
     template<typename T>
-    bool sync_queue<T>::try_push(const T &x)
+    bool sync_queue<T>::try_push(T &&x)
     {
         std::lock_guard<std::mutex> guard(queueMutex);
 
-        if (is_shutdown() || mQueue.size() < maxSize)
+        if (is_shutdown())
             return false;
 
-        mQueue.push(x);
+        return do_try_push(std::forward<T>(x));
+    }
+
+    template<typename T>
+    bool sync_queue<T>::do_try_push(T &&value)
+    {
+        if (mQueue.size() == maxSize)
+        {
+            return false;
+        }
+
+        mQueue.push(std::move(value));
+        mNotEmpty.notify_one();
         return true;
     }
 
     template<typename T>
-    void sync_queue<T>::push(const T& value)
+    optional<T> sync_queue<T>::do_try_pop()
+    {
+        if (mQueue.empty())
+        {
+            return nullopt;
+        }
+
+        auto element = std::move(mQueue.front());
+        mQueue.pop();
+        mNotFull.notify_one();
+        return element;
+    }
+
+    template<typename T>
+    void sync_queue<T>::push(T &&value)
     {
         std::unique_lock<std::mutex> queueLock(queueMutex);
 
         mNotFull.wait(queueLock, [this]() {
-            return mQueue.size() < maxSize;
+            return is_shutdown() || mQueue.size() < maxSize;
         });
 
         if (is_shutdown())
+        {
             throw queue_is_shutdown();
+        }
 
-        mQueue.push(value);
-
-        mNotEmpty.notify_one();
+        do_try_push(std::forward<T>(value));
     }
 
 }
