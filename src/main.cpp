@@ -1,12 +1,13 @@
 #include <iostream>
-#include <set>
+
 #include "mainHelper.hpp"
 
 using namespace lab_17;
 using namespace mainHelper;
-using namespace threadHelper;
 
-void calc(std::condition_variable& workIsDone, sync_queue<Result> &results, Task task, ThreadsContainer& cont, int number)
+typedef std::vector<std::thread> ThreadContainer;
+
+static Result calc(Task &task, bool &timeToEnd)
 {
     auto begin = task.begin;
     auto end = task.end;
@@ -18,60 +19,73 @@ void calc(std::condition_variable& workIsDone, sync_queue<Result> &results, Task
             continue;
         bool isPrime = true;
         for (size_t j = 2; j * j <= begin; j++)
+        {
+            if (timeToEnd)
+            {
+                throw queue_is_shutdown();
+            }
+
             if (begin % j == 0)
             {
                 isPrime = false;
                 break;
             }
+        }
+
         if (isPrime)
             counter++;
     }
-
-    results.push({task, counter});
-    cont.operationEnded(number);
-    workIsDone.notify_one();
+    return {task, counter};
 }
 
-void distribute(sync_queue<Task> &tasks, sync_queue<Result> &results, size_t workers, std::condition_variable &startWork,
-           bool &mustEnd)
+static void mainThreadCycle(sync_queue<Task> &tasks, sync_queue<Result> &results, bool &timeToEnd)
 {
-    ThreadsContainer container(workers, startWork);
-
-    std::mutex distributeMutex;
     while (true)
     {
-        std::unique_lock<std::mutex> locker(distributeMutex);
-        startWork.wait(locker);
-
-        if (mustEnd)
+        try
         {
-            container.shutdown();
-            break;
+            auto task = tasks.pop();
+            results.push(calc(task, timeToEnd));
         }
-
-        while (tasks.size() > 0 && container.hasFreeThreads())
+        catch (queue_is_shutdown &e)
         {
-            container.giveTask(tasks.pop(), results, calc);
+            return;
         }
+    }
+}
+
+static void
+startThreads(ThreadContainer &threads, sync_queue<Task> &tasks, sync_queue<Result> &results, bool &timeToEnd)
+{
+    for (auto &thread : threads)
+    {
+        thread = std::thread(mainThreadCycle,
+                             std::ref(tasks),
+                             std::ref(results),
+                             std::ref(timeToEnd));
+    }
+}
+
+static void joinThreads(ThreadContainer &threads)
+{
+    for (auto &thread : threads)
+    {
+        thread.join();
     }
 }
 
 int main(int, char** argv)
 {
-    size_t maxQueueSize = std::stoi(argv[2]);
-    size_t workers = std::stoi(argv[1]);
+    size_t maxQueueSize = std::stoull(argv[2]);
+    size_t workers = std::stoull(argv[1]);
 
     sync_queue<Task> tasks(maxQueueSize);
     sync_queue<Result> results;
 
-    std::condition_variable distributorStarter;
-    bool distributeEndFlag = false;
+    ThreadContainer threads(workers);
 
-    std::thread distributorThread(std::thread(distribute, std::ref(tasks)
-            , std::ref(results)
-            , workers
-            , std::ref(distributorStarter)
-            , std::ref(distributeEndFlag)));
+    bool timeToEnd = false;
+    startThreads(threads, tasks, results, timeToEnd);
 
     while (true)
     {
@@ -81,10 +95,19 @@ int main(int, char** argv)
         if (command == "submit")
         {
             MyTimer timer;
+
             Task task;
             std::cin >> task;
+
+            if (tasks.size() == maxQueueSize)
+            {
+                std::cout << "Queue is full, operation can't be done" << std::endl;
+                continue;
+            }
+
             tasks.push(task);
-            distributorStarter.notify_one();
+
+            timer.print();
         }
         else if (command == "show-done")
         {
@@ -98,9 +121,12 @@ int main(int, char** argv)
         else if (command == "quit")
         {
             MyTimer timer;
-            distributeEndFlag = true;
-            distributorStarter.notify_one();
-            distributorThread.detach();
+
+            timeToEnd = true;
+            tasks.shutdown();
+            results.shutdown();
+            joinThreads(threads);
+
             timer.print();
             break;
         }
@@ -109,5 +135,6 @@ int main(int, char** argv)
             std::cout << "Unknown command: " << command << std::endl;
         }
     }
+
     return 0;
 }
